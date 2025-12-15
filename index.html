@@ -1,0 +1,401 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <title>JS Tetris - 통합 버전</title>
+    
+    <style>
+        body {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            margin: 0;
+            background-color: #f0f0f0;
+            font-family: Arial, sans-serif;
+        }
+
+        #tetris-game {
+            display: flex;
+            gap: 20px;
+            border: 3px solid #333;
+            padding: 10px;
+            background-color: #fff;
+            box-shadow: 0 0 20px rgba(0, 0, 0, 0.2);
+            border-radius: 8px;
+        }
+
+        #tetris-board {
+            border: 1px solid #000;
+            background-color: #222; /* 어두운 배경 */
+            width: 200px; 
+            height: 400px;
+        }
+
+        #info {
+            text-align: center;
+            padding-top: 10px;
+        }
+        
+        #info h2 {
+            margin-top: 0;
+        }
+
+        #next-piece {
+            border: 1px solid #ccc;
+            margin-bottom: 20px;
+            background-color: #f9f9f9;
+        }
+
+        .controls {
+            margin: 15px 0;
+            font-size: 0.9em;
+            text-align: left;
+            padding-left: 10px;
+        }
+
+        button {
+            padding: 10px 20px;
+            cursor: pointer;
+            font-size: 1em;
+            background-color: #4CAF50;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            transition: background-color 0.3s;
+        }
+
+        button:hover {
+            background-color: #45a049;
+        }
+    </style>
+</head>
+<body>
+    <div id="tetris-game">
+        <canvas id="tetris-board" width="200" height="400"></canvas>
+        
+        <div id="info">
+            <h2>테트리스</h2>
+            <p>점수: <span id="score">0</span></p>
+            <h3>다음 블록:</h3>
+            <canvas id="next-piece" width="80" height="80"></canvas>
+            
+            <div class="controls">
+                **조작키**<br>
+                ← → : 이동<br>
+                ↓ : 느리게 떨어뜨리기<br>
+                ↑ : 회전<br>
+                Space : 바로 떨어뜨리기
+            </div>
+
+            <button onclick="startGame()">게임 시작</button>
+            <p id="game-over" style="display:none; color:red; font-weight:bold; font-size:1.5em;">GAME OVER!</p>
+        </div>
+    </div>
+    
+    <script>
+        // --- 상수 설정 ---
+        const BOARD_WIDTH = 10;
+        const BOARD_HEIGHT = 20;
+        const BLOCK_SIZE = 20; // 픽셀 단위
+
+        // 캔버스 및 DOM 요소 가져오기
+        const boardCanvas = document.getElementById('tetris-board');
+        const ctx = boardCanvas.getContext('2d');
+        const nextCanvas = document.getElementById('next-piece');
+        const nextCtx = nextCanvas.getContext('2d');
+        const scoreElement = document.getElementById('score');
+
+        // --- 변수 설정 ---
+        let board; 
+        let currentPiece; 
+        let nextPiece;
+        let score = 0;
+        let gameLoop;
+        let isGameOver = true; // 시작 전에는 게임 오버 상태로 설정
+
+        let dropInterval = 1000; 
+        let lastDropTime = 0;
+
+        // --- 테트로미노 정의 (7가지 블록) ---
+        // shape: 블록 모양, color: 색상
+        const PIECES = [
+            { shape: [[1, 1, 1, 1]], color: 'cyan' }, // I (1)
+            { shape: [[0, 1, 0], [1, 1, 1]], color: 'purple' }, // T (2)
+            { shape: [[1, 1], [1, 1]], color: 'yellow' }, // O (3)
+            { shape: [[1, 1, 0], [0, 1, 1]], color: 'green' }, // S (4)
+            { shape: [[0, 1, 1], [1, 1, 0]], color: 'red' }, // Z (5)
+            { shape: [[1, 0, 0], [1, 1, 1]], color: 'orange' }, // L (6)
+            { shape: [[0, 0, 1], [1, 1, 1]], color: 'blue' }, // J (7)
+        ];
+
+        // --- 게임 초기화 ---
+        function initBoard() {
+            board = Array.from({ length: BOARD_HEIGHT }, () => 
+                Array(BOARD_WIDTH).fill(0)
+            );
+            score = 0;
+            scoreElement.textContent = score;
+            isGameOver = false;
+            document.getElementById('game-over').style.display = 'none';
+
+            // 첫 번째 블록과 다음 블록 설정
+            nextPiece = getRandomPiece();
+            spawnNewPiece();
+        }
+
+        // --- 블록 관련 함수 ---
+
+        function getRandomPiece() {
+            const randomIndex = Math.floor(Math.random() * PIECES.length);
+            const pieceData = PIECES[randomIndex];
+            
+            return {
+                shape: pieceData.shape,
+                color: pieceData.color,
+                // 시작 위치 (중앙 상단)
+                x: Math.floor(BOARD_WIDTH / 2) - Math.floor(pieceData.shape[0].length / 2),
+                y: 0 
+            };
+        }
+
+        function spawnNewPiece() {
+            currentPiece = nextPiece;
+            nextPiece = getRandomPiece();
+            drawNextPiece();
+
+            // 생성 즉시 충돌이 발생하면 게임 오버
+            if (checkCollision(0, 0, currentPiece.shape)) {
+                gameOver();
+            }
+        }
+
+        function checkCollision(offsetX, offsetY, shape) {
+            for (let y = 0; y < shape.length; y++) {
+                for (let x = 0; x < shape[y].length; x++) {
+                    if (shape[y][x]) { 
+                        const newX = currentPiece.x + x + offsetX;
+                        const newY = currentPiece.y + y + offsetY;
+                        
+                        // 1. 벽이나 바닥에 닿는지 확인
+                        if (newX < 0 || newX >= BOARD_WIDTH || newY >= BOARD_HEIGHT) {
+                            return true;
+                        }
+                        
+                        // 2. 이미 존재하는 다른 블록과 겹치는지 확인
+                        if (newY >= 0 && board[newY] && board[newY][newX] !== 0) {
+                            return true;
+                        }
+                    }
+                }
+            }
+            return false;
+        }
+
+        function movePiece(dx, dy) {
+            if (checkCollision(dx, dy, currentPiece.shape)) {
+                if (dy === 1) { // 아래로 이동 중 충돌 -> 블록 고정
+                    mergePiece();
+                    clearLines();
+                    spawnNewPiece();
+                }
+                return false;
+            }
+            // 이동 성공
+            currentPiece.x += dx;
+            currentPiece.y += dy;
+            return true;
+        }
+
+        function mergePiece() {
+            for (let y = 0; y < currentPiece.shape.length; y++) {
+                for (let x = 0; x < currentPiece.shape[y].length; x++) {
+                    if (currentPiece.shape[y][x]) {
+                        // board의 해당 위치를 블록의 색상 인덱스+1로 채움
+                        const pieceIndex = PIECES.findIndex(p => p.color === currentPiece.color) + 1;
+                        board[currentPiece.y + y][currentPiece.x + x] = pieceIndex; 
+                    }
+                }
+            }
+        }
+
+        // 회전 로직: 2D 배열을 90도 시계 방향으로 회전
+        function rotateShape(shape) {
+            const rows = shape.length;
+            const cols = shape[0].length;
+            const newShape = Array.from({ length: cols }, () => Array(rows).fill(0));
+
+            for (let y = 0; y < rows; y++) {
+                for (let x = 0; x < cols; x++) {
+                    newShape[x][rows - 1 - y] = shape[y][x];
+                }
+            }
+            return newShape;
+        }
+
+        // 블록 회전 시도
+        function rotatePiece() {
+            const rotatedShape = rotateShape(currentPiece.shape);
+            
+            // 충돌하지 않는다면 업데이트
+            if (!checkCollision(0, 0, rotatedShape)) {
+                currentPiece.shape = rotatedShape;
+            }
+            // (참고: 실제 테트리스는 '벽차기(Wall Kick)' 로직이 필요하지만, 여기서는 생략합니다.)
+        }
+
+
+        // --- 렌더링 함수 ---
+
+        function drawBlock(context, x, y, color) {
+            context.fillStyle = color;
+            context.fillRect(x * BLOCK_SIZE, y * BLOCK_SIZE, BLOCK_SIZE, BLOCK_SIZE);
+            context.strokeStyle = 'black';
+            context.lineWidth = 1;
+            context.strokeRect(x * BLOCK_SIZE, y * BLOCK_SIZE, BLOCK_SIZE, BLOCK_SIZE);
+        }
+
+        function drawBoard() {
+            ctx.clearRect(0, 0, boardCanvas.width, boardCanvas.height);
+            
+            // 1. 이미 쌓인 블록들 그리기
+            for (let y = 0; y < BOARD_HEIGHT; y++) {
+                for (let x = 0; x < BOARD_WIDTH; x++) {
+                    if (board[y][x] !== 0) {
+                        // board 값(1~7)에 따라 PIECES에서 색상을 가져옴
+                        const colorIndex = board[y][x] - 1;
+                        drawBlock(ctx, x, y, PIECES[colorIndex].color); 
+                    }
+                }
+            }
+            
+            // 2. 현재 움직이는 블록 그리기
+            if (currentPiece) {
+                for (let y = 0; y < currentPiece.shape.length; y++) {
+                    for (let x = 0; x < currentPiece.shape[y].length; x++) {
+                        if (currentPiece.shape[y][x]) {
+                            drawBlock(ctx, currentPiece.x + x, currentPiece.y + y, currentPiece.color);
+                        }
+                    }
+                }
+            }
+        }
+
+        function drawNextPiece() {
+            nextCtx.clearRect(0, 0, nextCanvas.width, nextCanvas.height);
+            const piece = nextPiece;
+            if (!piece) return;
+
+            // 캔버스 중앙에 블록이 오도록 오프셋 계산 (4x4 그리드 기준)
+            const blockCols = piece.shape[0].length;
+            const blockRows = piece.shape.length;
+            const centerOffset = (4 - Math.max(blockCols, blockRows)) / 2 * BLOCK_SIZE;
+
+            const startX = (nextCanvas.width - blockCols * BLOCK_SIZE) / 2 / BLOCK_SIZE;
+            const startY = (nextCanvas.height - blockRows * BLOCK_SIZE) / 2 / BLOCK_SIZE;
+
+
+            for (let y = 0; y < blockRows; y++) {
+                for (let x = 0; x < blockCols; x++) {
+                    if (piece.shape[y][x]) {
+                        drawBlock(nextCtx, startX + x, startY + y, piece.color);
+                    }
+                }
+            }
+        }
+
+        // --- 게임 로직 및 루프 ---
+        
+        function clearLines() {
+            let linesCleared = 0;
+            
+            for (let y = BOARD_HEIGHT - 1; y >= 0; y--) {
+                // 해당 줄이 모두 0이 아닌 값(블록)으로 채워졌는지 확인
+                if (board[y].every(cell => cell !== 0)) {
+                    // 줄 제거
+                    for (let k = y; k > 0; k--) {
+                        board[k] = board[k - 1]; // 위 줄을 한 칸 아래로 복사
+                    }
+                    // 가장 위 줄은 빈 줄로 채웁니다.
+                    board[0] = Array(BOARD_WIDTH).fill(0);
+                    linesCleared++;
+                    y++; // 줄이 내려왔으므로, 같은 줄을 다시 검사
+                }
+            }
+
+            if (linesCleared > 0) {
+                // 점수 계산 
+                switch (linesCleared) {
+                    case 1: score += 100; break;
+                    case 2: score += 300; break;
+                    case 3: score += 500; break;
+                    case 4: score += 800; break;
+                }
+                scoreElement.textContent = score;
+            }
+        }
+
+        function gameLoopFn(time) {
+            if (isGameOver) return;
+
+            // 블록 자동 드롭 처리
+            if (time - lastDropTime > dropInterval) {
+                movePiece(0, 1); 
+                lastDropTime = time;
+            }
+
+            drawBoard();
+            gameLoop = requestAnimationFrame(gameLoopFn);
+        }
+
+        window.startGame = function() {
+            cancelAnimationFrame(gameLoop); // 기존 루프 중단
+            initBoard();
+            lastDropTime = performance.now(); // 현재 시간으로 초기화
+            gameLoopFn(lastDropTime); // 새 게임 루프 시작
+        }
+
+        function gameOver() {
+            isGameOver = true;
+            cancelAnimationFrame(gameLoop);
+            document.getElementById('game-over').style.display = 'block';
+        }
+
+        // --- 이벤트 리스너 (키보드 입력) ---
+        document.addEventListener('keydown', (e) => {
+            if (isGameOver || !currentPiece) return;
+
+            e.preventDefault(); // 방향키로 화면 스크롤 방지
+
+            switch (e.key) {
+                case 'ArrowLeft':
+                    movePiece(-1, 0); 
+                    break;
+                case 'ArrowRight':
+                    movePiece(1, 0); 
+                    break;
+                case 'ArrowDown':
+                    // 소프트 드롭: 즉시 이동
+                    movePiece(0, 1); 
+                    lastDropTime = performance.now(); // 드롭 타이머 리셋
+                    break;
+                case 'ArrowUp':
+                    rotatePiece(); 
+                    break;
+                case ' ': // Space: 하드 드롭
+                    while(movePiece(0, 1)) {
+                        // 블록이 더 이상 움직일 수 없을 때까지 아래로 이동
+                    }
+                    // 블록이 고정되었으므로 바로 다음 드롭 시간을 리셋
+                    lastDropTime = performance.now(); 
+                    break;
+            }
+            drawBoard(); 
+        });
+        
+        // 게임 초기 로드 시 캔버스 초기화
+        nextCtx.fillStyle = '#f9f9f9';
+        nextCtx.fillRect(0, 0, 80, 80);
+    </script>
+</body>
+</html>
